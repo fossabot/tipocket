@@ -14,25 +14,25 @@ import (
 // TryRunWorkload creates the workload docker container and injects necessary
 // environment variables
 func TryRunWorkload(name string,
-	resources []types.Resource,
+	resources []*types.Resource,
 	rris []*types.ResourceRequestItem,
 	wr *types.WorkloadRequest,
 	envs map[string]string,
 ) ([]byte, []byte, error) {
 
-	rriID2Resource := make(map[uint]types.Resource)
+	rriID2Resource := make(map[uint]*types.Resource)
 	rriItemID2RriID := make(map[uint]uint)
-	component2Resources := make(map[string][]types.Resource)
+	component2Resources := make(map[string][]*types.Resource)
 	// resource request item id -> resource
-	for _, re := range resources {
-		rriID2Resource[re.RRIID] = re
+	for idx, re := range resources {
+		rriID2Resource[re.RRIID] = resources[idx]
 	}
 	// resource request item item_id ->  resource request item id
 	for _, rri := range rris {
 		rriItemID2RriID[rri.ItemID] = rri.ID
 		for _, component := range strings.Split(rri.Components, "|") {
 			if _, ok := component2Resources[component]; !ok {
-				component2Resources[component] = make([]types.Resource, 0)
+				component2Resources[component] = make([]*types.Resource, 0)
 			}
 			component2Resources[component] = append(component2Resources[component], rriID2Resource[rri.ID])
 		}
@@ -45,7 +45,7 @@ func TryRunWorkload(name string,
 	}
 
 	var (
-		rs  types.Resource
+		rs  *types.Resource
 		err error
 	)
 	envs["CLUSTER_NAME"] = name
@@ -95,9 +95,9 @@ func RestoreDataIfConfig(wr *types.WorkloadRequest, envs map[string]string, dock
 	return nil, nil, nil
 }
 
-func randomResource(rs []types.Resource) (types.Resource, error) {
+func randomResource(rs []*types.Resource) (*types.Resource, error) {
 	if len(rs) == 0 {
-		return types.Resource{}, fmt.Errorf("expect non-empty resources")
+		return nil, fmt.Errorf("expect non-empty resources")
 	}
 	return rs[rand.Intn(len(rs))], nil
 }

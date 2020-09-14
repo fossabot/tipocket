@@ -1,4 +1,4 @@
-package manager
+package api_server
 
 import (
 	"encoding/json"
@@ -71,12 +71,8 @@ func (m *Manager) runServer() {
 	r.HandleFunc("/api/cluster/list", m.clusterList)
 	r.HandleFunc("/api/cluster/resource/{name}", m.clusterResourceByName)
 	r.HandleFunc("/api/cluster/{name}", m.clusterRun).Methods("POST")
-	// for debug
-	//r.HandleFunc("/api/cluster/deploy/{name}", m.clusterDeploy)
-	//r.HandleFunc("/api/cluster/destroy/{name}", m.clusterDestroy)
 	r.HandleFunc("/api/cluster/scale_out/{name}/{id}/{component}", m.clusterScaleOut)
 	r.HandleFunc("/api/cluster/scale_in/{name}/{id}/{component}", m.clusterScaleIn)
-	//r.HandleFunc("/api/cluster/workload/{name}", m.runWorkload)
 	r.HandleFunc("/api/cluster/workload/{name}/result", m.uploadWorkloadResult).Methods("POST")
 	r.HandleFunc("/api/cluster/workload/{name}/result", m.getWorkloadResult).Methods("GET")
 
@@ -91,7 +87,7 @@ func (m *Manager) runServer() {
 }
 
 func (m *Manager) clusterList(w http.ResponseWriter, r *http.Request) {
-	cluster, err := m.Cluster.ListClusterRequests()
+	cluster, err := m.Cluster.FindClusterRequests(m.Cluster.DB.DB)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -184,7 +180,7 @@ func (m *Manager) clusterRun(w http.ResponseWriter, r *http.Request) {
 	for _, rri := range rris {
 		rids = append(rids, rri.RID)
 	}
-	rs, err := m.Resource.FindResourcesByIDs(rids)
+	rs, err := m.Resource.FindResources(m.Resource.DB.DB, "id IN (?)", rids)
 	if err != nil {
 		fail(w, err)
 		return
@@ -234,7 +230,7 @@ func (m *Manager) clusterRun(w http.ResponseWriter, r *http.Request) {
 
 func (m *Manager) runWorkloadWithBaseline(
 	name string,
-	resources []types.Resource,
+	resources []*types.Resource,
 	rr *types.ResourceRequest,
 	rris []*types.ResourceRequestItem,
 	cr *types.ClusterRequest,
@@ -249,7 +245,7 @@ func (m *Manager) runWorkloadWithBaseline(
 }
 
 func (m *Manager) runClusterWorkload(name string,
-	resources []types.Resource,
+	resources []*types.Resource,
 	rr *types.ResourceRequest,
 	rris []*types.ResourceRequestItem,
 	cr *types.ClusterRequest,
@@ -277,94 +273,6 @@ func (m *Manager) runClusterWorkload(name string,
 		return errors.Trace(err)
 	}
 	return nil
-}
-
-func (m *Manager) clusterDeploy(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	name := vars["name"]
-	rr, err := m.Resource.GetResourceRequestByName(m.DB.DB, name)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("find resource request by name %s failed, err: %v", name, err), http.StatusInternalServerError)
-		return
-	}
-	cr, err := m.Cluster.GetLastClusterRequestByRRID(rr.ID)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("get cluster request by resource request id %d failed, err: %v", rr.ID, err), http.StatusInternalServerError)
-		return
-	}
-	if cr.Status != types.ClusterRequestStatusReady {
-		http.Error(w, fmt.Sprintf("cluster %s expect %s, but got %s", rr.Name, types.ClusterRequestStatusReady, cr.Status), http.StatusInternalServerError)
-		return
-	}
-	rris, err := m.Resource.FindResourceRequestItemsByRRID(rr.ID)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("find resource request items by rr_id %d failed, err: %v", rr.ID, err.Error()), http.StatusInternalServerError)
-		return
-	}
-	var rids []uint
-	for _, rri := range rris {
-		rids = append(rids, rri.RID)
-	}
-	rs, err := m.Resource.FindResourcesByIDs(rids)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("find resources by ids %v failed, err: %v", rids, err), http.StatusInternalServerError)
-		return
-	}
-	crts, err := m.Cluster.FindClusterRequestToposByCRID(cr.ID)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("get cluster request topology by cr_id %d failed, err: %v", cr.ID, err), http.StatusInternalServerError)
-		return
-	}
-	if err := deploy.TryDeployCluster(rr.Name, rs, rris, cr, crts); err != nil {
-		http.Error(w, fmt.Sprintf("try deploy cluster %s failed, err: %v", rr.Name, err.Error()), http.StatusInternalServerError)
-		return
-	}
-	if err := m.setOnline(rris, crts); err != nil {
-		http.Error(w, fmt.Sprintf("set online failed: %v", err), http.StatusInternalServerError)
-		return
-	}
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, "deploy cluster %s success", rr.Name)
-}
-
-func (m *Manager) clusterDestroy(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	name := vars["name"]
-	rr, err := m.Resource.GetResourceRequestByName(m.DB.DB, name)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("find resource request by name %s failed, err: %v", name, err), http.StatusInternalServerError)
-		return
-	}
-	cr, err := m.Cluster.GetLastClusterRequestByRRID(rr.ID)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("get cluster request by resource request id %d failed, err: %v", rr.ID, err), http.StatusInternalServerError)
-		return
-	}
-	if cr.Status != types.ClusterRequestStatusReady {
-		http.Error(w, fmt.Sprintf("cluster %s expect %s, but got %s", rr.Name, types.ClusterRequestStatusReady, cr.Status), http.StatusInternalServerError)
-		return
-	}
-
-	rris, err := m.Resource.FindResourceRequestItemsByRRID(rr.ID)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("find resource request items by rr_id %d failed, err: %v", rr.ID, err.Error()), http.StatusInternalServerError)
-		return
-	}
-	crts, err := m.Cluster.FindClusterRequestToposByCRID(cr.ID)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("get cluster request topology by cr_id %d failed, err: %v", cr.ID, err), http.StatusInternalServerError)
-		return
-	}
-	if err := deploy.TryDestroyCluster(rr.Name); err != nil {
-		http.Error(w, fmt.Sprintf("try destroy cluster %s failed, err: %v", rr.Name, err.Error()), http.StatusInternalServerError)
-		return
-	}
-	if err := m.setOffline(rris, crts); err != nil {
-		http.Error(w, fmt.Sprintf("set offline failed: %v", err), http.StatusInternalServerError)
-		return
-	}
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, "destry cluster %s success", rr.Name)
 }
 
 func (m *Manager) clusterScaleOut(w http.ResponseWriter, r *http.Request) {
@@ -479,60 +387,6 @@ func (m *Manager) setOffline(rris []*types.ResourceRequestItem, crts []*types.Cl
 		crt.Status = types.ClusterTopoStatusReady
 	}
 	return m.Resource.UpdateResourceRequestItemsAndClusterRequestTopos(rris, crts)
-}
-
-func (m *Manager) runWorkload(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	name := vars["name"]
-
-	rr, err := m.Resource.GetResourceRequestByName(m.DB.DB, name)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("find resource request by name %s failed, err: %v", name, err), http.StatusInternalServerError)
-		return
-	}
-	cr, err := m.Cluster.GetLastClusterRequestByRRID(rr.ID)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("get cluster request by resource request id %d failed, err: %v", rr.ID, err), http.StatusInternalServerError)
-		return
-	}
-	if cr.Status != types.ClusterRequestStatusReady {
-		http.Error(w, fmt.Sprintf("cluster %s expect %s, but got %s", rr.Name, types.ClusterRequestStatusReady, cr.Status), http.StatusInternalServerError)
-		return
-	}
-	rris, err := m.Resource.FindResourceRequestItemsByRRID(rr.ID)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("find resource request items by rr_id %d failed, err: %v", rr.ID, err.Error()), http.StatusInternalServerError)
-		return
-	}
-	var rids []uint
-	for _, rri := range rris {
-		rids = append(rids, rri.RID)
-	}
-	rs, err := m.Resource.FindResourcesByIDs(rids)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("find resources by ids %v failed, err: %v", rids, err), http.StatusInternalServerError)
-		return
-	}
-	wr, err := m.Cluster.GetClusterWorkloadByClusterRequestID(cr.ID)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("find workload by cr_id %d failed, err: %v", cr.ID, err), http.StatusInternalServerError)
-		return
-	}
-	_, _, err = workload.TryRunWorkload(rr.Name, rs, rris, wr, nil)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("try run workload failed: %v", err), http.StatusInternalServerError)
-		return
-	}
-	result, err := m.Cluster.FindWorkloadReportsByClusterRequestID(cr.ID)
-	if err != nil {
-		fail(w, err)
-		return
-	}
-	if len(result) == 0 {
-		fail(w, errors.NotFoundf("workload request %s", name))
-		return
-	}
-	ok(w, *result[len(result)-1].PlainText)
 }
 
 func (m *Manager) uploadWorkloadResult(w http.ResponseWriter, r *http.Request) {

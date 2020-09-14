@@ -24,7 +24,7 @@ type Topology struct {
 
 // TryDeployCluster ...
 func TryDeployCluster(name string,
-	resources []types.Resource,
+	resources []*types.Resource,
 	rris []*types.ResourceRequestItem,
 	cr *types.ClusterRequest,
 	crts []*types.ClusterRequestTopology) error {
@@ -36,11 +36,11 @@ func TryDeployCluster(name string,
 		MonitoringServers: make(map[string]*types.ClusterRequestTopology),
 		GrafanaServers:    make(map[string]*types.ClusterRequestTopology),
 	}
-	rriID2Resource := make(map[uint]types.Resource)
+	rriID2Resource := make(map[uint]*types.Resource)
 	rriItemID2RriID := make(map[uint]uint)
 	// resource request item id -> resource
-	for _, re := range resources {
-		rriID2Resource[re.RRIID] = re
+	for idx, re := range resources {
+		rriID2Resource[re.RRIID] = resources[idx]
 	}
 	// resource request item item_id ->  resource request item id
 	for _, rri := range rris {
